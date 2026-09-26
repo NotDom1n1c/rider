@@ -36,7 +36,45 @@ window.RIDER = window.RIDER || {};
     // seed flat start so the bike lands safely
     for (let i = 0; i < 14; i++) { this.points.push({ x: this.x, y: this.baseY }); this.x += this.step; }
     this.nextGapAt = this.x + 500 + this.rng() * 400;
+    this.nextRampAt = this.x + 900 + this.rng() * 500;
   }
+
+  // Steep ramp up to a crest, then either a gap with a lower downhill landing
+  // or a steep downhill. Slopes stay inside what the landing assist can handle.
+  Terrain.prototype.buildRamp = function (withGap) {
+    const d = this.difficulty, step = this.step;
+    const rise = 0.42 + this.rng() * 0.14;            // ramp steepness (dy/dx)
+    // ramp length in points; shortened when the ground is already high so the
+    // crest stays inside the playfield (never teleport the ground = no cliffs)
+    const room = Math.floor((this.y - (this.baseY - 175)) / (step * rise));
+    const n = Math.min(5 + (this.rng() * 2 | 0), room);
+    if (n < 3) { this.nextRampAt = this.x + 260; this.points.push({ x: this.x, y: this.y }); this.x += step; return; }
+    let y = this.y;
+    for (let i = 0; i < n; i++) {
+      this.points.push({ x: this.x, y }); this.x += step;
+      y -= step * rise;
+    }
+    const crestY = y;
+    this.points.push({ x: this.x, y: crestY });       // crest = take-off edge
+    if (withGap) {
+      const gapW = 120 + this.rng() * (60 + d * 40);
+      const x1 = this.x, x2 = x1 + gapW;
+      this.gaps.push({ x1, x2 });
+      this.x = x2;
+      y = clamp(crestY + 40 + this.rng() * 60, this.baseY - 150, this.baseY + 150);
+    } else {
+      this.x += step;
+    }
+    // downhill run-out (landing zone)
+    const fall = 0.3 + this.rng() * 0.12;
+    for (let i = 0; i < 6; i++) {
+      if (i > 0) y = clamp(y + step * fall, this.baseY - 175, this.baseY + 150);
+      this.points.push({ x: this.x, y }); this.x += step;
+    }
+    this.y = y;                                        // = height of the last point pushed
+    this.nextRampAt = this.x + (700 + this.rng() * 700) / (0.8 + d * 0.15);
+    if (this.nextGapAt < this.x + 200) this.nextGapAt = this.x + 260 + this.rng() * 200;
+  };
 
   Terrain.PX_PER_M = 8;
 
@@ -49,6 +87,12 @@ window.RIDER = window.RIDER || {};
         this.ended = true;
         continue;
       }
+      // kicker ramp — a steep take-off that gives enough air for a flip.
+      // Half of them throw you over a gap onto a downhill landing.
+      if (this.x >= this.nextRampAt && this.x < this.nextGapAt - 300) {
+        this.buildRamp(this.rng() < 0.5);
+        continue;
+      }
       // decide gap — disconnected segments at roughly the same height, with a
       // FLAT lip so you can coast across level (release) and land wheels-down.
       if (this.x >= this.nextGapAt) {
@@ -56,6 +100,9 @@ window.RIDER = window.RIDER || {};
         // two flat lip points -> near-horizontal launch
         this.points.push({ x: this.x, y: lipY }); this.x += this.step;
         this.points.push({ x: this.x, y: lipY }); this.x += this.step;
+        // point exactly on the edge, otherwise the last metre before the gap
+        // interpolates toward the landing height (an invisible ramp)
+        this.points.push({ x: this.x, y: lipY });
         const gapW = 78 + this.rng() * (52 + d * 62);
         const x1 = this.x, x2 = this.x + gapW;
         this.gaps.push({ x1, x2 });
@@ -74,7 +121,10 @@ window.RIDER = window.RIDER || {};
       const targetY = this.baseY
         + Math.sin(this.phase) * amp
         + Math.sin(this.phase * 0.45 + 1.3) * amp * 0.45;
-      this.y += (targetY - this.y) * 0.28;
+      // ease toward the hill curve, but never steeper than ~27° per step
+      // (after a ramp/landing the curve can be far away -> used to make walls)
+      const maxDy = this.step * 0.5;
+      this.y += clamp((targetY - this.y) * 0.28, -maxDy, maxDy);
       this.y = clamp(this.y, this.baseY - 175, this.baseY + 150);
       this.points.push({ x: this.x, y: this.y });
       // sprinkle coins above crests
@@ -119,11 +169,20 @@ window.RIDER = window.RIDER || {};
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 
-  // Air rotation rate (rad/frame at multiplier 1) — one flip in ~0.5s @60fps.
+  // Physics runs at a FIXED 60 steps per second, independent of the screen's
+  // refresh rate (120/144 Hz displays used to run the whole game 2x too fast).
+  const STEP_MS = 1000 / 60;
+  const MAX_STEPS = 5;               // catch-up limit after a hiccup / background tab
+
+  // Air rotation rate (rad/step at multiplier 1) — one flip in ~0.55s.
   // spinSpeed = BASE_SPIN * vehicle.spinMultiplier (fast ~1.3x, stable ~0.8x).
-  const BASE_SPIN = 0.205;
-  // Landing must be within this of upright (~26°) or you land on the roof and crash.
-  const LAND_TOLERANCE = 0.46;
+  const BASE_SPIN = 0.19;
+  // Landing must be within this of the ground angle (~34°) or you land on the roof and crash.
+  const LAND_TOLERANCE = 0.6;
+  // When NOT spinning and close to the ground, the car gently lines up with the
+  // slope below it, so a level car no longer crashes on a steep downhill.
+  const LAND_ASSIST_RANGE = 70;      // px above ground where the assist kicks in
+  const MICRO_AIR = 8;               // shorter hops don't count as a "landing" (no fx/score)
 
   // ---------- Game ----------
   const Game = {
@@ -178,13 +237,16 @@ window.RIDER = window.RIDER || {};
         x: startX, y: (this.terrain.groundAt(startX) - offset), speed: 4.2, vy: 0,
         angle: 0, angVel: 0, airborne: false, dead: false,
         L, r, wheelY, offset,
-        maxSpeed: 10.2 * bd.stats.speed,
+        maxSpeed: 9.4 * bd.stats.speed,
         cruise: 5.0 * (0.9 + bd.stats.speed * 0.1),
         accel: 0.05 * bd.stats.speed,          // constant ground acceleration
         weight: bd.stats.weight, flipAgility: bd.stats.flip,  // flipAgility = spin multiplier
-        airTime: 0, launchX: 0, spinAccum: 0, comboFlips: 0, lastAngle: 0
+        airTime: 0, launchX: 0, spinAccum: 0, comboFlips: 0, lastAngle: 0, spun: false
       };
-      this.cam = { x: this.bike.x - this.W * 0.32, y: 0 };
+      this.bike.prev = { x: this.bike.x, y: this.bike.y, angle: 0 };
+      this._acc = 0; this._last = null;
+      this.cam = { x: this.bike.x - this.W * 0.32, y: this.bike.y - this.H * 0.55 };
+      this.cam.prev = { x: this.cam.x, y: this.cam.y };
       this.run = {
         score: 0, distance: 0, coins: 0, flips: 0, startX: this.bike.x,
         segments: 0, flipPoints: 0,
@@ -203,18 +265,28 @@ window.RIDER = window.RIDER || {};
 
     setHold(v) { this.holding = v; },
 
-    loop() {
-      this.raf = requestAnimationFrame(() => this.loop());
+    loop(now) {
+      this.raf = requestAnimationFrame((t) => this.loop(t));
+      if (now == null) now = performance.now();
+      const dt = this._last == null ? STEP_MS : Math.min(250, now - this._last);
+      this._last = now;
       if (this.running) {
-        this.update();
+        this._acc = (this._acc || 0) + dt;
+        let n = 0;
+        while (this._acc >= STEP_MS && n < MAX_STEPS) { this.update(); this._acc -= STEP_MS; n++; }
+        if (n === MAX_STEPS) this._acc = 0;          // drop the backlog instead of fast-forwarding
+      } else {
+        this._acc = 0;
       }
-      this.render();
+      this.render(this.running ? this._acc / STEP_MS : 1);
     },
 
     // ---------- physics ----------
     update() {
       const t = this.terrain, b = this.bike, run = this.run;
       if (this.startCountdown > 0) this.startCountdown--;
+      b.prev = { x: b.x, y: b.y, angle: b.angle };
+      this.cam.prev = { x: this.cam.x, y: this.cam.y };
       t.generateTo(b.x);
 
       this.physicsStep();
@@ -295,6 +367,12 @@ window.RIDER = window.RIDER || {};
 
       if (b.dead) {
         b.vy += gravity; b.x += b.speed; b.y += b.vy; b.angle += b.angVel; b.speed *= 0.97;
+        const g = t.groundAt(b.x);
+        if (g != null && b.y > g - b.offset * 0.5 && b.y < g + 40) {   // tumble on the track, not through it
+          b.y = g - b.offset * 0.5;
+          b.vy = -Math.abs(b.vy) * 0.3;
+          b.speed *= 0.85; b.angVel *= 0.7;
+        }
         return;
       }
 
@@ -313,7 +391,8 @@ window.RIDER = window.RIDER || {};
         b.x += b.speed;
         const gc = groundCenterY(b.x);
         if (gc == null || b.y + vy < gc - 1.0) {
-          this.launch();                          // ran off a segment edge OR flew off a crest
+          b.vy = vy;
+          this.launch(gc == null);                // ran off a segment edge OR flew off a crest
         } else {
           b.y = gc; b.vy = vy;
           // pitch to match terrain
@@ -329,24 +408,38 @@ window.RIDER = window.RIDER || {};
         b.y += b.vy;
         if (this.holding) {
           b.angle -= BASE_SPIN * b.flipAgility;   // always counterclockwise, fixed rate
+          b.spun = true;
           this.trackFlips();
+        } else {
+          const ahead = t.groundAt(b.x + b.speed * 6);
+          const gNow = groundCenterY(b.x);
+          const height = gNow == null ? Infinity : gNow - b.y;
+          if (!b.spun && b.airTime < 14) {
+            // "levels at takeoff" — eased over a few frames instead of a hard snap
+            b.angle += (0 - b.angle) * 0.2;
+          } else if (height < LAND_ASSIST_RANGE && ahead != null) {
+            // landing assist: only nudges a car that is already roughly wheels-down
+            const slopeA = Math.atan(t.slopeAt(b.x + b.speed * 4));
+            const off = normalizeAngle(b.angle - slopeA);
+            if (Math.abs(off) < LAND_TOLERANCE + 0.35) b.angle -= off * 0.18;
+          }
         }
         const gc = groundCenterY(b.x);
         if (gc != null && b.y >= gc) this.land(gc);
       }
     },
 
-    launch() {
+    launch(offEdge) {
       const b = this.bike, t = this.terrain;
-      b.airborne = true; b.airTime = 0;
+      b.airborne = true; b.airTime = 0; b.spun = false;
       // upward pop: a small base kick (so every jump arcs like a jump) plus a
-      // big bonus off a steep hill crest. Flat gap edges get just the base pop.
+      // bonus off a steep hill crest. Flat gap edges get just the base pop.
       const approach = t.slopeAt(b.x - 30);
       const up = -Math.min(0, approach);           // upslope steepness (>=0)
-      b.vy = Math.max(-9.6, -(1.5 + up * b.speed * 1.7));
-      b.angle = 0;                                  // vehicle levels for takeoff (flips start from upright)
+      b.vy = Math.max(-9.2, Math.min(b.vy, -(1.4 + up * b.speed * 1.6)));
+      b.angle = normalizeAngle(b.angle);            // keep the current pitch: no visual snap
       b.launchX = b.x; b.spinAccum = 0; b.comboFlips = 0; b.lastAngle = b.angle;
-      R.Audio.jump();
+      if (offEdge || up > 0.12) R.Audio.jump();
     },
 
     trackFlips() {
@@ -364,12 +457,18 @@ window.RIDER = window.RIDER || {};
     land(gc) {
       const t = this.terrain, b = this.bike;
       const slopeAngle = Math.atan(t.slopeAt(b.x));
-      const diff = Math.abs(normalizeAngle(b.angle - slopeAngle));
+      const off = normalizeAngle(b.angle - slopeAngle);
       // must be wheels-down within tolerance (else land on the roof -> crash)
-      if (diff > LAND_TOLERANCE) { b.y = gc; this.die('crash'); return; }
+      if (Math.abs(off) > LAND_TOLERANCE) { b.y = gc; this.die('crash'); return; }
 
+      const micro = b.airTime < MICRO_AIR && b.comboFlips === 0;
       b.airborne = false;
-      b.y = gc; b.angle = slopeAngle; b.angVel = 0; b.vy = 0;
+      // unwind full rotations but keep the small offset; the ground pitch
+      // smoothing then settles it over a few frames instead of snapping
+      b.angle = slopeAngle + off; b.angVel = 0; b.vy = 0;
+      b.y = gc;
+      if (micro) return;                           // tiny bump: no dust, sound or streak
+      b.speed *= 1 - Math.min(0.25, Math.abs(off) * 0.35);   // sloppy landings cost a bit of speed
       this.run.landStreak++;
       // commit flip scoring ONLY on a clean landing: +1 rotation, +1 perfect = 2 each
       if (b.comboFlips > 0) {
@@ -408,6 +507,7 @@ window.RIDER = window.RIDER || {};
       t.generateTo(x + 400);
       b.x = x; b.y = (t.groundAt(x) || this.H * 0.6) - b.offset;
       b.speed = b.cruise; b.vy = 0; b.angle = 0; b.angVel = 0; b.airborne = false; b.dead = false;
+      b.prev = { x: b.x, y: b.y, angle: 0 };
     },
 
     revive() {
@@ -419,6 +519,8 @@ window.RIDER = window.RIDER || {};
       t.generateTo(x + 300);
       b.x = x; b.y = (t.groundAt(x) || this.H * 0.6) - b.offset;
       b.speed = b.cruise; b.vy = 0; b.angle = 0; b.angVel = 0; b.airborne = false; b.dead = false;
+      b.prev = { x: b.x, y: b.y, angle: 0 };
+      this.cam.x = b.x - this.W * 0.32; this.cam.prev = { x: this.cam.x, y: this.cam.y };
       this.run.alive = true; this._finishing = false;
       this.running = true;
       R.Audio.startEngine();
@@ -433,19 +535,32 @@ window.RIDER = window.RIDER || {};
     },
 
     // ---------- rendering ----------
-    render() {
+    render(alpha) {
       const ctx = this.ctx, W = this.W, H = this.H, th = this.theme();
+      if (alpha == null) alpha = 1;
       // sky
       const g = ctx.createLinearGradient(0, 0, 0, H);
       g.addColorStop(0, th.sky[0]); g.addColorStop(1, th.sky[1]);
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
       if (!this.terrain) return;
 
+      // interpolate between the last two physics steps for smooth motion on any refresh rate
+      const cam = this.cam, cp = cam.prev || cam;
+      const rc = { x: cp.x + (cam.x - cp.x) * alpha, y: cp.y + (cam.y - cp.y) * alpha };
+      const b = this.bike, bp = b.prev || b;
+      this._pose = {
+        x: bp.x + (b.x - bp.x) * alpha,
+        y: bp.y + (b.y - bp.y) * alpha,
+        angle: bp.angle + normalizeAngle(b.angle - bp.angle) * alpha
+      };
+      const realCam = this.cam;
+      this.cam = rc;                               // draw helpers read this.cam
+
       // parallax mountains
       this.drawMountains(ctx, W, H, th);
 
       ctx.save();
-      ctx.translate(-this.cam.x, -this.cam.y);
+      ctx.translate(-rc.x, -rc.y);
 
       this.drawTerrain(ctx, th);
       this.drawCoins(ctx, th);
@@ -454,6 +569,7 @@ window.RIDER = window.RIDER || {};
       this.drawFloats(ctx);
 
       ctx.restore();
+      this.cam = realCam;
 
       // start hint
       if (this.startCountdown > 0 && this.mode !== 'menu') {
@@ -571,11 +687,11 @@ window.RIDER = window.RIDER || {};
     },
 
     drawBike(ctx, th) {
-      const b = this.bike, bd = this.bikeDef();
+      const b = this.bike, bd = this.bikeDef(), pose = this._pose || b;
       // trail
       ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate(b.angle);
+      ctx.translate(pose.x, pose.y);
+      ctx.rotate(pose.angle);
       // glow trail when fast/airborne
       if (b.speed > b.cruise + 0.5 || b.airborne) {
         ctx.save();
