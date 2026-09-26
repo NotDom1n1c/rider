@@ -107,7 +107,7 @@ window.RIDER = window.RIDER || {};
       const cb = this.currencyBar(); cb.classList.add('floating'); sc.appendChild(cb);
 
       const hero = el('div', 'menu-hero');
-      hero.innerHTML = `<h1 class="logo">RIDER</h1><p class="tagline">stunt bike racing</p>
+      hero.innerHTML = `<h1 class="logo">DRIVER</h1><p class="tagline">stunt car racing</p>
         <div class="best-tag">${ICON.trophy}<span>Best ${s.stats.bestScore}</span></div>`;
       sc.appendChild(hero);
 
@@ -515,7 +515,7 @@ window.RIDER = window.RIDER || {};
         <div class="set-row"><span>Bikes owned</span><b>${s.ownedBikes.length}/56</b></div>
         <button class="mbtn danger" id="set-reset">Reset all progress</button>
         <button class="mbtn" id="set-close">Close</button>
-        <p class="credit">A fan-made Rider clone · built with Claude</p>`);
+        <p class="credit">DRIVER · inspired by Ketchapp's Rider · built with Claude</p>`);
       $('#t-sound').onclick = (e) => { s.sound = !s.sound; R.Store.save(); e.target.classList.toggle('on', s.sound); if (s.sound) R.Audio.click(); };
       $('#t-music').onclick = (e) => { s.music = !s.music; R.Store.save(); e.target.classList.toggle('on', s.music); if (!s.music) R.Audio.stopMusic(); };
       $('#set-close').onclick = () => this.closeModal();

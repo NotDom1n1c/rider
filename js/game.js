@@ -63,7 +63,7 @@ window.RIDER = window.RIDER || {};
     let x = x0 || 0, y = 0;
     for (let n = 0; n < 600; n++) {
       vy += g; x += s; y += vy;
-      if (x >= w) return y <= drop + Math.max(0, vy) + 4;
+      if (x >= w) return y <= drop + Math.max(0, vy) + LIP_CATCH;
     }
     return false;
   };
@@ -285,7 +285,12 @@ window.RIDER = window.RIDER || {};
   // spinSpeed = BASE_SPIN * vehicle.spinMultiplier (fast ~1.3x, stable ~0.8x).
   const BASE_SPIN = 0.19;
   // Landing must be within this of the ground angle (~34°) or you land on the roof and crash.
-  const LAND_TOLERANCE = 0.6;
+  const LAND_TOLERANCE = 1.0;        // <= ~57° off the ground angle = clean landing
+  // between LAND_TOLERANCE and ROOF_ANGLE (~110°) the car bounces and rights itself;
+  // only beyond that (practically upside down) is it a roof crash
+  const ROOF_ANGLE = 1.92;
+  const SPIN_DELAY = 10;             // steps before holding starts a spin on a normal hop (not a ramp)
+  const LIP_CATCH = 14;              // px: a car slightly below a gap's far edge still catches it
   // When NOT spinning and close to the ground, the car gently lines up with the
   // slope below it, so a level car no longer crashes on a steep downhill.
   const LAND_ASSIST_RANGE = 70;      // px above ground where the assist kicks in
@@ -818,7 +823,8 @@ window.RIDER = window.RIDER || {};
         b.vy += gravity;
         b.x += b.speed;
         b.y += b.vy;
-        if (this.holding) {
+        const canSpin = b.rampJump || b.airTime > SPIN_DELAY || b.spun;
+        if (this.holding && canSpin) {
           b.angle -= BASE_SPIN * b.flipAgility;   // always counterclockwise, fixed rate
           b.spun = true;
           this.trackFlips();
@@ -833,14 +839,14 @@ window.RIDER = window.RIDER || {};
             // landing assist: only nudges a car that is already roughly wheels-down
             const slopeA = Math.atan(t.slopeAt(b.x + b.speed * 4));
             const off = normalizeAngle(b.angle - slopeA);
-            if (Math.abs(off) < LAND_TOLERANCE + 0.35) b.angle -= off * 0.18;
+            if (Math.abs(off) < ROOF_ANGLE) b.angle -= off * 0.18;
           }
         }
         const gc = groundCenterY(b.x);
         if (gc != null && b.y >= gc) {
           // coming out of a gap far below the far edge = you hit the wall, not a landing
           const fromGap = t.groundAt(b.x - b.speed) == null;
-          if (fromGap && b.y - gc > Math.max(0, b.vy) + 4) { this.die('wall'); return; }
+          if (fromGap && b.y - gc > Math.max(0, b.vy) + LIP_CATCH) { this.die('wall'); return; }
           this.land(gc);
         }
       }
@@ -897,6 +903,7 @@ window.RIDER = window.RIDER || {};
       const up = -Math.min(0, approach);           // upslope steepness (>=0)
       // only a real ramp throws you: its crest is within one step behind the car
       const onRamp = t.kickers.some(kx => b.x >= kx && b.x - kx <= b.speed + 3);
+      b.rampJump = onRamp;
       if (onRamp) b.vy = Math.max(-9.2, Math.min(b.vy, -(1.4 + up * b.speed * 1.6)));
       else b.vy = Math.max(-6, Math.min(b.vy, 0));   // ordinary hill: natural hop, no kick
       b.angle = normalizeAngle(b.angle);            // keep the current pitch: no visual snap
@@ -920,10 +927,24 @@ window.RIDER = window.RIDER || {};
       const t = this.terrain, b = this.bike;
       const slopeAngle = Math.atan(t.slopeAt(b.x));
       const off = normalizeAngle(b.angle - slopeAngle);
-      // must be wheels-down within tolerance (else land on the roof -> crash)
-      if (Math.abs(off) > LAND_TOLERANCE) { b.y = gc; this.die('crash'); return; }
-
       const micro = b.airTime < MICRO_AIR && b.comboFlips === 0;
+      if (!micro) {
+        // on the roof: that's a crash
+        if (Math.abs(off) > ROOF_ANGLE) { b.y = gc; this.die('crash'); return; }
+        // rough landing: bounce, lose speed, the car rights itself (no crash)
+        if (Math.abs(off) > LAND_TOLERANCE) {
+          b.y = gc - 1;
+          b.vy = -Math.max(2.4, Math.abs(b.vy) * 0.35);
+          b.speed *= 0.8;
+          b.airTime = 0; b.spun = false; b.rampJump = false;   // eases level again in the air
+          b.comboFlips = 0; b.spinAccum = 0; b.lastAngle = b.angle; // a botched flip scores nothing
+          this.addFloat(b.x, b.y - 40, 'ROUGH!', '#ffb86b');
+          R.Audio.land();
+          this.spawnParticles(b.x, b.y + b.offset - 4, this.theme().dust, 10);
+          return;
+        }
+      }
+
       b.airborne = false;
       // unwind full rotations but keep the small offset; the ground pitch
       // smoothing then settles it over a few frames instead of snapping

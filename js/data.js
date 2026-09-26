@@ -25,7 +25,7 @@ window.RIDER = window.RIDER || {};
   /* ---------------- BIKES (56, incl. 4 secret) ---------------- */
   const bodyStyles = ['sport', 'moto', 'cruiser', 'chopper', 'quad'];
   const prefixes = ['Neo', 'Volt', 'Blaze', 'Ghost', 'Turbo', 'Hyper', 'Nova', 'Cyber', 'Storm', 'Vapor', 'Pulse', 'Titan', 'Zephyr'];
-  const suffixes = ['Rider', 'Runner', 'Streak', 'Bolt'];
+  const suffixes = ['Driver', 'Runner', 'Streak', 'Bolt'];
 
   // car designs (drawn in game.js CAR_MODELS)
   const MODELS = ['rider', 'muscle', 'rally', 'monster', 'buggy', 'formula', 'pickup', 'retro'];
@@ -61,7 +61,7 @@ window.RIDER = window.RIDER || {};
     list[0].color = '#3fc85f';
     list[0].accent = '#8ff2a3';
     list[0].wheel = '#0a2414';
-    list[0].name = 'Rider';
+    list[0].name = 'Driver';
     // 4 secret bikes — unlocked by conditions, not purchasable
     const secrets = [
       { id: 'secret_phantom', model: 'formula', name: 'Phantom',   color: '#e9e9ff', accent: '#8be9ff', wheel: '#0a0a12', style: 'sport',   how: 'Land 30 flips in a single run',      stats: { speed: 1.5, weight: 0.9,  flip: 1.6 } },
