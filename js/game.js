@@ -294,7 +294,8 @@ window.RIDER = window.RIDER || {};
   // When NOT spinning and close to the ground, the car gently lines up with the
   // slope below it, so a level car no longer crashes on a steep downhill.
   const LAND_ASSIST_RANGE = 70;      // px above ground where the assist kicks in
-  const MICRO_AIR = 8;               // shorter hops don't count as a "landing" (no fx/score)
+  const MICRO_AIR = 8;
+  const TRAIL_LEN = 16;              // physics steps of history in the speed trail (~0.27 s)               // shorter hops don't count as a "landing" (no fx/score)
 
   // ---------- vehicle models ----------
   // Each model: wheel radius r, wheel x positions, overall length, a body painter
@@ -655,7 +656,7 @@ window.RIDER = window.RIDER || {};
         segments: 0, flipPoints: 0, loops: 0, loopPoints: 0,
         landStreak: 0, maxCombo: 0, hugeJumps: 0, alive: true, goalDone: false
       };
-      this.particles = []; this.floats = [];
+      this.particles = []; this.floats = []; this.trail = [];
       this.holding = false;
       this._finishing = false;
       this.startCountdown = 40; // brief "ready" frames w/ hint
@@ -695,6 +696,7 @@ window.RIDER = window.RIDER || {};
       t.generateTo(b.x);
 
       this.physicsStep();
+      this.updateTrail();
 
       // camera follow
       const targetCamX = b.x - this.W * 0.32;
@@ -935,7 +937,7 @@ window.RIDER = window.RIDER || {};
         if (Math.abs(off) > LAND_TOLERANCE) {
           b.y = gc - 1;
           b.vy = -Math.max(2.4, Math.abs(b.vy) * 0.35);
-          b.speed *= 0.8;
+          b.speed *= 0.85;
           b.airTime = 0; b.spun = false; b.rampJump = false;   // eases level again in the air
           b.comboFlips = 0; b.spinAccum = 0; b.lastAngle = b.angle; // a botched flip scores nothing
           this.addFloat(b.x, b.y - 40, 'ROUGH!', '#ffb86b');
@@ -951,7 +953,7 @@ window.RIDER = window.RIDER || {};
       b.angle = slopeAngle + off; b.angVel = 0; b.vy = 0;
       b.y = gc;
       if (micro) return;                           // tiny bump: no dust, sound or streak
-      b.speed *= 1 - Math.min(0.25, Math.abs(off) * 0.35);   // sloppy landings cost a bit of speed
+      b.speed *= 1 - Math.min(0.12, Math.max(0, Math.abs(off) - 0.3) * 0.3);   // only clearly crooked landings cost speed
       this.run.landStreak++;
       // commit flip scoring ONLY on a clean landing: +1 rotation, +1 perfect = 2 each
       if (b.comboFlips > 0) {
@@ -1064,6 +1066,7 @@ window.RIDER = window.RIDER || {};
       this.drawLoops(ctx, th);
       this.drawCoins(ctx, th);
       this.drawParticles(ctx);
+      this.drawTrail(ctx);
       this.drawBike(ctx, th);
       this.drawFloats(ctx);
 
@@ -1206,20 +1209,80 @@ window.RIDER = window.RIDER || {};
       ctx.restore();
     },
 
+    // ---- speed trail ----
+    // The trail is left behind IN THE WORLD: each physics step records where the
+    // back of the car was, so it follows the real path through jumps, flips and
+    // loops, and it tapers + fades toward its end.
+    trailAnchor(x, y, a) {
+      const lx = -22, ly = 9;                      // just behind the rear bumper, at exhaust height
+      const c = Math.cos(a), s = Math.sin(a);
+      return { x: x + c * lx - s * ly, y: y + s * lx + c * ly };
+    },
+
+    updateTrail() {
+      const b = this.bike, tr = this.trail;
+      const fast = b.speed > b.cruise + 0.6 || b.airborne || b.onLoop;
+      if (b.dead || !fast) {                        // stop emitting: the tail catches up and vanishes
+        tr.splice(0, 2);
+        return;
+      }
+      const p = this.trailAnchor(b.x, b.y, b.angle);
+      const last = tr[tr.length - 1];
+      if (last && Math.hypot(p.x - last.x, p.y - last.y) > 60) tr.length = 0;   // teleport (revive)
+      tr.push(p);
+      if (tr.length > TRAIL_LEN) tr.shift();
+    },
+
+    drawTrail(ctx) {
+      const tr = this.trail;
+      if (!tr || tr.length < 2) return;
+      const pose = this._pose || this.bike;
+      // head follows the interpolated car so it never lags behind on 120 Hz screens
+      const pts = tr.slice();
+      if (!this.bike.dead) pts.push(this.trailAnchor(pose.x, pose.y, pose.angle));
+      const n = pts.length, col = this.bikeDef().color, maxW = 9;
+      // outline of a ribbon that is widest at the car and pointed at the tail
+      const left = [], right = [];
+      for (let i = 0; i < n; i++) {
+        const a = pts[Math.max(0, i - 1)], c = pts[Math.min(n - 1, i + 1)];
+        let dx = c.x - a.x, dy = c.y - a.y;
+        const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+        const t = i / (n - 1);                      // 0 = tail, 1 = head
+        const hw = maxW * 0.5 * Math.pow(t, 0.8);
+        left.push({ x: pts[i].x - dy * hw, y: pts[i].y + dx * hw });
+        right.push({ x: pts[i].x + dy * hw, y: pts[i].y - dx * hw });
+      }
+      const head = pts[n - 1], tail = pts[0];
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const grad = ctx.createLinearGradient(tail.x, tail.y, head.x, head.y);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, col);
+      ctx.beginPath();
+      ctx.moveTo(left[0].x, left[0].y);
+      for (let i = 1; i < n; i++) ctx.lineTo(left[i].x, left[i].y);
+      for (let i = n - 1; i >= 0; i--) ctx.lineTo(right[i].x, right[i].y);
+      ctx.closePath();
+      ctx.globalAlpha = 0.55;
+      ctx.shadowColor = col; ctx.shadowBlur = 14;
+      ctx.fillStyle = grad; ctx.fill();
+      // hot bright core along the centre line
+      ctx.shadowBlur = 0; ctx.globalAlpha = 0.7;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (let i = 1; i < n; i++) {
+        const t = i / (n - 1);
+        ctx.strokeStyle = 'rgba(255,255,255,' + (t * t * 0.8).toFixed(3) + ')';
+        ctx.lineWidth = 0.6 + t * 1.6;
+        ctx.beginPath(); ctx.moveTo(pts[i - 1].x, pts[i - 1].y); ctx.lineTo(pts[i].x, pts[i].y); ctx.stroke();
+      }
+      ctx.restore();
+    },
+
     drawBike(ctx, th) {
       const b = this.bike, bd = this.bikeDef(), pose = this._pose || b;
-      // trail
       ctx.save();
       ctx.translate(pose.x, pose.y);
       ctx.rotate(pose.angle);
-      // glow trail when fast/airborne
-      if (b.speed > b.cruise + 0.5 || b.airborne) {
-        ctx.save();
-        ctx.globalAlpha = 0.5; ctx.strokeStyle = bd.color; ctx.lineWidth = 6;
-        ctx.shadowColor = bd.color; ctx.shadowBlur = 20; ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(-26, 10); ctx.lineTo(-58, 13); ctx.stroke();
-        ctx.restore();
-      }
       this.drawBikeShape(ctx, bd, b);
       ctx.restore();
     },
