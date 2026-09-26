@@ -265,7 +265,7 @@ window.RIDER = window.RIDER || {};
       const sc = $('[data-screen="garage"]');
       sc.innerHTML = '';
       sc.appendChild(this.header('Garage', ICON.bike));
-      sc.appendChild(el('div', 'screen-sub', `${s.ownedBikes.length}/56 bikes owned`));
+      sc.appendChild(el('div', 'screen-sub', `${s.ownedBikes.length}/56 cars owned`));
 
       const grid = el('div', 'card-grid');
       R.BIKES.forEach(bd => {

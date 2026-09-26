@@ -27,6 +27,9 @@ window.RIDER = window.RIDER || {};
   const prefixes = ['Neo', 'Volt', 'Blaze', 'Ghost', 'Turbo', 'Hyper', 'Nova', 'Cyber', 'Storm', 'Vapor', 'Pulse', 'Titan', 'Zephyr'];
   const suffixes = ['Rider', 'Runner', 'Streak', 'Bolt'];
 
+  // car designs (drawn in game.js CAR_MODELS)
+  const MODELS = ['rider', 'muscle', 'rally', 'monster', 'buggy', 'formula', 'pickup', 'retro'];
+
   function makeBikes() {
     const list = [];
     let idx = 0;
@@ -37,6 +40,7 @@ window.RIDER = window.RIDER || {};
         const hue = (idx * 47) % 360;
         const price = idx === 0 ? 0 : Math.round((40 + tier * 55 + (idx % 8) * 12));
         list.push({
+          model: MODELS[idx % MODELS.length],  // neighbours in the garage are different designs
           id: 'bike' + idx,
           name: prefixes[p] + ' ' + suffixes[s],
           color: `hsl(${hue} 78% 55%)`,
@@ -60,10 +64,10 @@ window.RIDER = window.RIDER || {};
     list[0].name = 'Rider';
     // 4 secret bikes — unlocked by conditions, not purchasable
     const secrets = [
-      { id: 'secret_phantom', name: 'Phantom',   color: '#e9e9ff', accent: '#8be9ff', wheel: '#0a0a12', style: 'sport',   how: 'Land 30 flips in a single run',      stats: { speed: 1.5, weight: 0.9,  flip: 1.6 } },
-      { id: 'secret_golden',  name: 'Golden Ghost', color: '#ffd451', accent: '#fff2b0', wheel: '#2a2110', style: 'chopper', how: 'Reach a total of 50,000 coins',       stats: { speed: 1.4, weight: 0.95, flip: 1.4 } },
-      { id: 'secret_shark',   name: 'Reef Shark', color: '#39c6ff', accent: '#bff4ff', wheel: '#08202b', style: 'quad',    how: 'Complete all 32 levels',              stats: { speed: 1.45, weight: 1.05, flip: 1.3 } },
-      { id: 'secret_dev',     name: 'Dev Machine', color: '#54ff9f', accent: '#ffffff', wheel: '#04140a', style: 'moto',    how: 'Complete all 100 challenges',         stats: { speed: 1.6, weight: 0.9,  flip: 1.7 } }
+      { id: 'secret_phantom', model: 'formula', name: 'Phantom',   color: '#e9e9ff', accent: '#8be9ff', wheel: '#0a0a12', style: 'sport',   how: 'Land 30 flips in a single run',      stats: { speed: 1.5, weight: 0.9,  flip: 1.6 } },
+      { id: 'secret_golden', model: 'muscle',  name: 'Golden Ghost', color: '#ffd451', accent: '#fff2b0', wheel: '#2a2110', style: 'chopper', how: 'Reach a total of 50,000 coins',       stats: { speed: 1.4, weight: 0.95, flip: 1.4 } },
+      { id: 'secret_shark', model: 'buggy',   name: 'Reef Shark', color: '#39c6ff', accent: '#bff4ff', wheel: '#08202b', style: 'quad',    how: 'Complete all 32 levels',              stats: { speed: 1.45, weight: 1.05, flip: 1.3 } },
+      { id: 'secret_dev', model: 'monster',     name: 'Dev Machine', color: '#54ff9f', accent: '#ffffff', wheel: '#04140a', style: 'moto',    how: 'Complete all 100 challenges',         stats: { speed: 1.6, weight: 0.9,  flip: 1.7 } }
     ];
     secrets.forEach(sc => list.push(Object.assign({ price: 0, secret: true }, sc)));
     return list;
